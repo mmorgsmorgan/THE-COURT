@@ -41,6 +41,7 @@ import type { Judgment } from "@/lib/judge";
 type Step =
   | "connect"
   | "wrong-chain"
+  | "loading"
   | "cooldown"
   | "identity"
   | "identity-confirm"
@@ -125,14 +126,25 @@ export default function CourtroomPage() {
       return;
     }
 
+    // Wait for both reads before deciding identity vs confess — prevents the
+    // identity-step flicker that would otherwise let a returning user re-bind.
+    if (nextAtRaw === undefined || linkedOnchain === undefined) {
+      setStep((curr) =>
+        curr === "connect" || curr === "wrong-chain" ? "loading" : curr
+      );
+      return;
+    }
+
     // Ritual chain returns block.timestamp in MILLISECONDS, so nextJudgmentAt is ms.
-    const nextAtMs = nextAtRaw ? Number(nextAtRaw) : 0;
+    const nextAtMs = Number(nextAtRaw);
     const nowMs = Date.now();
 
     if (nextAtMs > nowMs) {
       setNextJudgment(new Date(nextAtMs));
       setStep((curr) =>
-        curr === "connect" || curr === "wrong-chain" ? "cooldown" : curr
+        curr === "connect" || curr === "wrong-chain" || curr === "loading"
+          ? "cooldown"
+          : curr
       );
       return;
     }
@@ -145,6 +157,7 @@ export default function CourtroomPage() {
         if (
           curr === "connect" ||
           curr === "wrong-chain" ||
+          curr === "loading" ||
           curr === "cooldown" ||
           curr === "identity" ||
           curr === "identity-confirm"
@@ -156,9 +169,14 @@ export default function CourtroomPage() {
       return;
     }
 
-    // Read still loading OR known to be empty — land on identity by default.
+    // Read returned empty — user has never bound. Show identity entry.
     setStep((curr) => {
-      if (curr === "connect" || curr === "wrong-chain" || curr === "cooldown") {
+      if (
+        curr === "connect" ||
+        curr === "wrong-chain" ||
+        curr === "loading" ||
+        curr === "cooldown"
+      ) {
         return "identity";
       }
       return curr;
@@ -456,6 +474,25 @@ export default function CourtroomPage() {
               >
                 {switching ? "SWITCHING…" : "SWITCH TO RITUAL"}
               </button>
+            </motion.div>
+          )}
+
+          {/* ═══ STEP: LOADING ═══ */}
+          {step === "loading" && (
+            <motion.div
+              key="loading"
+              {...fadeVariants}
+              transition={{ duration: 0.3 }}
+              className="flex flex-col items-center text-center gap-4"
+            >
+              <p className="font-mono text-court-muted text-xs tracking-[0.4em]">
+                QUERYING THE TRIBUNAL RECORD…
+              </p>
+              <div className="flex gap-2">
+                <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse" />
+                <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse [animation-delay:150ms]" />
+                <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse [animation-delay:300ms]" />
+              </div>
             </motion.div>
           )}
 
