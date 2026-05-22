@@ -288,10 +288,13 @@ export default function CourtroomPage() {
       toast("Identity tx submitted — waiting for confirmation…", { icon: "⏳" });
     } catch (err) {
       const msg = (err as Error)?.message ?? "";
+      console.error("Bind failed:", err);
       if (msg.includes("User rejected") || msg.includes("rejected")) {
         toast.error("Signature rejected");
+      } else if (msg.includes("NEXT_PUBLIC_COURTROOM_ADDRESS")) {
+        toast.error("Contract address not configured. Check Vercel env vars.");
       } else {
-        toast.error("Bind tx failed");
+        toast.error(`Bind tx failed: ${msg.slice(0, 80) || "unknown error"}`);
       }
     }
   }, [identity, alreadyBound, writeBind]);
@@ -363,10 +366,13 @@ export default function CourtroomPage() {
       toast("Verdict tx submitted — waiting for confirmation…", { icon: "⏳" });
     } catch (err) {
       const msg = (err as Error)?.message ?? "";
+      console.error("Verdict failed:", err);
       if (msg.includes("User rejected") || msg.includes("rejected")) {
         toast.error("You cannot escape judgment");
+      } else if (msg.includes("NEXT_PUBLIC_COURTROOM_ADDRESS")) {
+        toast.error("Contract address not configured. Check Vercel env vars.");
       } else {
-        toast.error("Verdict tx failed");
+        toast.error(`Verdict tx failed: ${msg.slice(0, 80) || "unknown error"}`);
       }
     }
   }, [judgment, address, identity, confession, writeVerdict]);
