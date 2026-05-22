@@ -1,6 +1,7 @@
 "use client";
 
 import { useAccount, useConnect, useDisconnect } from "wagmi";
+import { ritualChain } from "@/lib/chain";
 
 export function WalletButton() {
   const { address, isConnected } = useAccount();
@@ -24,7 +25,9 @@ export function WalletButton() {
       {connectors.map((connector) => (
         <button
           key={connector.uid}
-          onClick={() => connect({ connector })}
+          onClick={() =>
+            connect({ connector, chainId: ritualChain.id })
+          }
           className="btn-neon w-full"
         >
           {connector.name === "Injected"

@@ -210,55 +210,85 @@ export default function CourtroomPage() {
     setAutoSwitchAttempted(true);
 
     (async () => {
+      const eth = (window as unknown as {
+        ethereum?: {
+          request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+        };
+      }).ethereum;
+
+      const chainIdHex = `0x${ritualChain.id.toString(16)}`;
+      const ritualConfig = {
+        chainId: chainIdHex,
+        chainName: ritualChain.name,
+        nativeCurrency: ritualChain.nativeCurrency,
+        rpcUrls: [...ritualChain.rpcUrls.default.http],
+        blockExplorerUrls: ritualChain.blockExplorers
+          ? [ritualChain.blockExplorers.default.url]
+          : undefined,
+      };
+
+      // Prefer direct window.ethereum calls for injected wallets — wagmi's
+      // switchChain has been observed to silently no-op in production.
+      if (eth?.request) {
+        toast("Requesting Ritual chain…", { icon: "⛓️", duration: 3000 });
+        try {
+          await eth.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: chainIdHex }],
+          });
+          toast.success("Switched to Ritual chain");
+          return;
+        } catch (switchErr) {
+          const switchMsg = (switchErr as Error)?.message ?? "";
+          const code = (switchErr as { code?: number })?.code;
+          console.error("switch failed:", code, switchMsg);
+
+          const chainNotAdded =
+            code === 4902 ||
+            switchMsg.includes("4902") ||
+            switchMsg.toLowerCase().includes("unrecognized") ||
+            switchMsg.toLowerCase().includes("has not been added");
+
+          if (chainNotAdded) {
+            try {
+              await eth.request({
+                method: "wallet_addEthereumChain",
+                params: [ritualConfig],
+              });
+              toast.success("Ritual chain added");
+              return;
+            } catch (addErr) {
+              const addMsg = (addErr as Error)?.message ?? "";
+              console.error("add failed:", addMsg);
+              if (addMsg.includes("rejected") || (addErr as { code?: number })?.code === 4001) {
+                toast("Add Ritual to your wallet to continue", { icon: "🔗" });
+              } else {
+                toast.error(`Could not add Ritual: ${addMsg.slice(0, 60) || "unknown"}`);
+              }
+              return;
+            }
+          }
+
+          if (switchMsg.includes("rejected") || code === 4001) {
+            toast("Switch to Ritual to continue", { icon: "🔗" });
+          } else {
+            toast.error(`Could not switch: ${switchMsg.slice(0, 60) || "unknown"}`);
+          }
+          return;
+        }
+      }
+
+      // Non-injected (WalletConnect / Coinbase) — let wagmi handle it.
       try {
         await switchChainAsync({ chainId: ritualChain.id });
         toast.success("Switched to Ritual chain");
       } catch (err) {
         const msg = (err as Error)?.message ?? "";
-        console.error("Auto-switch failed:", err);
-
-        const chainNotAdded =
-          msg.includes("4902") ||
-          msg.toLowerCase().includes("unrecognized") ||
-          msg.toLowerCase().includes("has not been added") ||
-          msg.toLowerCase().includes("does not have a chain");
-
-        if (chainNotAdded) {
-          const eth = (window as unknown as { ethereum?: { request: (args: { method: string; params: unknown[] }) => Promise<unknown> } }).ethereum;
-          if (eth?.request) {
-            try {
-              await eth.request({
-                method: "wallet_addEthereumChain",
-                params: [
-                  {
-                    chainId: `0x${ritualChain.id.toString(16)}`,
-                    chainName: ritualChain.name,
-                    nativeCurrency: ritualChain.nativeCurrency,
-                    rpcUrls: [...ritualChain.rpcUrls.default.http],
-                    blockExplorerUrls: ritualChain.blockExplorers
-                      ? [ritualChain.blockExplorers.default.url]
-                      : undefined,
-                  },
-                ],
-              });
-              toast.success("Ritual chain added to your wallet");
-              return;
-            } catch (addErr) {
-              const addMsg = (addErr as Error)?.message ?? "";
-              if (addMsg.includes("User rejected") || addMsg.includes("rejected")) {
-                toast("Add Ritual to your wallet to continue", { icon: "🔗" });
-              } else {
-                toast.error(`Could not add Ritual: ${addMsg.slice(0, 60) || "unknown error"}`);
-              }
-              return;
-            }
-          }
-        }
-
-        if (msg.includes("User rejected") || msg.includes("rejected")) {
+        console.error("wagmi switch failed:", err);
+        if (msg.includes("rejected")) {
           toast("Switch to Ritual to continue", { icon: "🔗" });
         } else {
-          toast.error(`Could not switch to Ritual: ${msg.slice(0, 60) || "unknown error"}`);
+          toast.error(`Could not switch: ${msg.slice(0, 60) || "unknown"}`);
         }
       }
     })();
