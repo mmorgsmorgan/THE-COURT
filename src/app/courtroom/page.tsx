@@ -45,11 +45,24 @@ type Step =
   | "cooldown"
   | "identity"
   | "identity-confirm"
+  | "awaiting-bind"
   | "confess"
   | "processing"
   | "accept"
+  | "awaiting-verdict"
   | "verdict"
   | "locked";
+
+const PENDING_BIND_KEY = "courtroom_pending_bind";
+const PENDING_VERDICT_KEY = "courtroom_pending_verdict";
+
+type PendingBind = { username: string; submittedAt: number };
+type PendingVerdict = {
+  username: string;
+  confession: string;
+  judgment: Judgment;
+  submittedAt: number;
+};
 
 const fadeVariants = {
   initial: { opacity: 0, y: 30 },
@@ -72,6 +85,44 @@ export default function CourtroomPage() {
   const [nextJudgment, setNextJudgment] = useState<Date | null>(null);
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
   const [autoSwitchAttempted, setAutoSwitchAttempted] = useState(false);
+  const [pendingBind, setPendingBind] = useState<PendingBind | null>(null);
+  const [pendingVerdict, setPendingVerdict] = useState<PendingVerdict | null>(null);
+
+  // Hydrate pending tx state from sessionStorage on mount. Critical for
+  // mobile flow: when MetaMask Mobile takes over to sign and returns, the
+  // browser tab may have lost React state but we need to remember a tx is
+  // in flight so we don't bounce the user back to the start of the flow.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const rawBind = sessionStorage.getItem(PENDING_BIND_KEY);
+      if (rawBind) setPendingBind(JSON.parse(rawBind));
+      const rawVerdict = sessionStorage.getItem(PENDING_VERDICT_KEY);
+      if (rawVerdict) {
+        const parsed = JSON.parse(rawVerdict) as PendingVerdict;
+        setPendingVerdict(parsed);
+        setConfession(parsed.confession);
+        setJudgment(parsed.judgment);
+      }
+    } catch {
+      sessionStorage.removeItem(PENDING_BIND_KEY);
+      sessionStorage.removeItem(PENDING_VERDICT_KEY);
+    }
+  }, []);
+
+  const savePendingBind = useCallback((p: PendingBind | null) => {
+    setPendingBind(p);
+    if (typeof window === "undefined") return;
+    if (p) sessionStorage.setItem(PENDING_BIND_KEY, JSON.stringify(p));
+    else sessionStorage.removeItem(PENDING_BIND_KEY);
+  }, []);
+
+  const savePendingVerdict = useCallback((p: PendingVerdict | null) => {
+    setPendingVerdict(p);
+    if (typeof window === "undefined") return;
+    if (p) sessionStorage.setItem(PENDING_VERDICT_KEY, JSON.stringify(p));
+    else sessionStorage.removeItem(PENDING_VERDICT_KEY);
+  }, []);
 
   const verdictRef = useRef<HTMLDivElement>(null);
   const onRitual = chainId === ritualChain.id;
@@ -146,6 +197,15 @@ export default function CourtroomPage() {
     const nextAtMs = Number(nextAtRaw);
     const nowMs = Date.now();
 
+    // Pending verdict tx confirmed onchain? — clear and route to verdict screen.
+    if (pendingVerdict && nextAtMs > nowMs) {
+      savePendingVerdict(null);
+      refetchLinked();
+      setNextJudgment(new Date(nextAtMs));
+      setStep("verdict");
+      return;
+    }
+
     if (nextAtMs > nowMs) {
       setNextJudgment(new Date(nextAtMs));
       setStep((curr) =>
@@ -158,8 +218,29 @@ export default function CourtroomPage() {
 
     setNextJudgment(null);
 
+    // Pending bind tx submitted, waiting for chain confirmation
+    if (
+      pendingBind &&
+      (linkedOnchain === undefined ||
+        (typeof linkedOnchain === "string" && linkedOnchain.length === 0))
+    ) {
+      setStep((curr) =>
+        curr === "verdict" || curr === "locked" ? curr : "awaiting-bind"
+      );
+      return;
+    }
+
+    // Pending verdict still in flight — onchain cooldown not yet observed
+    if (pendingVerdict) {
+      setStep((curr) =>
+        curr === "verdict" || curr === "locked" ? curr : "awaiting-verdict"
+      );
+      return;
+    }
+
     // If linkedUsername is known and non-empty, skip identity steps.
     if (typeof linkedOnchain === "string" && linkedOnchain.length > 0) {
+      if (pendingBind) savePendingBind(null);
       setStep((curr) => {
         if (
           curr === "connect" ||
@@ -167,7 +248,8 @@ export default function CourtroomPage() {
           curr === "loading" ||
           curr === "cooldown" ||
           curr === "identity" ||
-          curr === "identity-confirm"
+          curr === "identity-confirm" ||
+          curr === "awaiting-bind"
         ) {
           return "confess";
         }
@@ -188,7 +270,21 @@ export default function CourtroomPage() {
       }
       return curr;
     });
-  }, [isConnected, address, onRitual, nextAtRaw, linkedOnchain, nextAtError, linkedError, loadingTimedOut]);
+  }, [
+    isConnected,
+    address,
+    onRitual,
+    nextAtRaw,
+    linkedOnchain,
+    nextAtError,
+    linkedError,
+    loadingTimedOut,
+    pendingBind,
+    pendingVerdict,
+    savePendingBind,
+    savePendingVerdict,
+    refetchLinked,
+  ]);
 
   // ── Loading-state safety net: cap loading at 2.5s ────
   useEffect(() => {
@@ -199,6 +295,28 @@ export default function CourtroomPage() {
     const id = setTimeout(() => setLoadingTimedOut(true), 2500);
     return () => clearTimeout(id);
   }, [step]);
+
+  // ── Poll onchain reads while awaiting a tx confirmation ────
+  useEffect(() => {
+    if (step !== "awaiting-bind" && step !== "awaiting-verdict") return;
+    const id = setInterval(() => {
+      if (step === "awaiting-bind") refetchLinked();
+      if (step === "awaiting-verdict") refetchCooldown();
+    }, 3000);
+    return () => clearInterval(id);
+  }, [step, refetchLinked, refetchCooldown]);
+
+  // ── Give up on pending tx after 5 minutes (likely user abandoned) ───
+  useEffect(() => {
+    if (!pendingBind) return;
+    if (Date.now() - pendingBind.submittedAt < 5 * 60 * 1000) return;
+    savePendingBind(null);
+  }, [pendingBind, savePendingBind]);
+  useEffect(() => {
+    if (!pendingVerdict) return;
+    if (Date.now() - pendingVerdict.submittedAt < 5 * 60 * 1000) return;
+    savePendingVerdict(null);
+  }, [pendingVerdict, savePendingVerdict]);
 
   // ── Auto-switch to Ritual on connect, add chain if missing ──
   useEffect(() => {
@@ -364,6 +482,11 @@ export default function CourtroomPage() {
     }
     try {
       const addr = assertCourtroomAddress();
+      // Mark the bind as pending BEFORE sending the tx so that, if the
+      // mobile-wallet hand-off reloads the tab, we know to wait for chain
+      // confirmation instead of re-prompting the user to bind.
+      savePendingBind({ username: identity.username, submittedAt: Date.now() });
+      setStep("awaiting-bind");
       await writeBind({
         address: addr,
         abi: courtroomAbi,
@@ -373,6 +496,8 @@ export default function CourtroomPage() {
       });
       toast("Identity tx submitted — waiting for confirmation…", { icon: "⏳" });
     } catch (err) {
+      savePendingBind(null);
+      setStep("identity-confirm");
       const msg = (err as Error)?.message ?? "";
       console.error("Bind failed:", err);
       if (msg.includes("User rejected") || msg.includes("rejected")) {
@@ -383,16 +508,17 @@ export default function CourtroomPage() {
         toast.error(`Bind tx failed: ${msg.slice(0, 80) || "unknown error"}`);
       }
     }
-  }, [identity, alreadyBound, writeBind]);
+  }, [identity, alreadyBound, writeBind, savePendingBind]);
 
   useEffect(() => {
     if (bindSuccess) {
       toast.success("Identity bound onchain");
+      savePendingBind(null);
       refetchLinked();
       setStep("confess");
       resetBind();
     }
-  }, [bindSuccess, refetchLinked, resetBind]);
+  }, [bindSuccess, refetchLinked, resetBind, savePendingBind]);
 
   // ── Submit Confession ───────────────────────────────
   const handleConfess = useCallback(async () => {
@@ -442,6 +568,15 @@ export default function CourtroomPage() {
       const addr = assertCourtroomAddress();
       const cHash = hashConfession(confession);
       const vHash = hashVerdict(judgment);
+      // Persist before submitting — so a mobile-wallet hand-off that reloads
+      // the tab can recover the original confession + verdict text.
+      savePendingVerdict({
+        username: identity.username,
+        confession,
+        judgment,
+        submittedAt: Date.now(),
+      });
+      setStep("awaiting-verdict");
       await writeVerdict({
         address: addr,
         abi: courtroomAbi,
@@ -451,6 +586,8 @@ export default function CourtroomPage() {
       });
       toast("Verdict tx submitted — waiting for confirmation…", { icon: "⏳" });
     } catch (err) {
+      savePendingVerdict(null);
+      setStep("accept");
       const msg = (err as Error)?.message ?? "";
       console.error("Verdict failed:", err);
       if (msg.includes("User rejected") || msg.includes("rejected")) {
@@ -461,7 +598,7 @@ export default function CourtroomPage() {
         toast.error(`Verdict tx failed: ${msg.slice(0, 80) || "unknown error"}`);
       }
     }
-  }, [judgment, address, identity, confession, writeVerdict]);
+  }, [judgment, address, identity, confession, writeVerdict, savePendingVerdict]);
 
   useEffect(() => {
     if (verdictSuccess && verdictHash && judgment && identity && address) {
@@ -481,6 +618,7 @@ export default function CourtroomPage() {
         created_at: new Date().toISOString(),
       });
       toast.success("Verdict sealed onchain");
+      savePendingVerdict(null);
       refetchCooldown();
       setStep("verdict");
       resetVerdict();
@@ -494,6 +632,7 @@ export default function CourtroomPage() {
     confession,
     refetchCooldown,
     resetVerdict,
+    savePendingVerdict,
   ]);
 
   // ── Download Verdict ────────────────────────────────
@@ -650,6 +789,74 @@ export default function CourtroomPage() {
                 <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse [animation-delay:150ms]" />
                 <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse [animation-delay:300ms]" />
               </div>
+            </motion.div>
+          )}
+
+          {/* ═══ STEP: AWAITING BIND ═══ */}
+          {step === "awaiting-bind" && (
+            <motion.div
+              key="awaiting-bind"
+              {...fadeVariants}
+              transition={{ duration: 0.4 }}
+              className="flex flex-col items-center text-center gap-6"
+            >
+              <GlitchText
+                text="BINDING IDENTITY…"
+                as="h2"
+                className="text-2xl sm:text-3xl text-[#00ff41] neon-glow"
+              />
+              <p className="font-mono text-court-muted text-sm tracking-wider max-w-sm">
+                Waiting for onchain confirmation. If you signed in your wallet
+                app, this should clear in a few seconds.
+              </p>
+              <div className="flex gap-2">
+                <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse" />
+                <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse [animation-delay:150ms]" />
+                <span className="w-2 h-2 bg-[#00ff41] rounded-full animate-pulse [animation-delay:300ms]" />
+              </div>
+              <button
+                onClick={() => {
+                  savePendingBind(null);
+                  setStep("identity-confirm");
+                }}
+                className="font-mono text-court-muted hover:text-court-red text-[10px] tracking-[0.3em]"
+              >
+                CANCEL
+              </button>
+            </motion.div>
+          )}
+
+          {/* ═══ STEP: AWAITING VERDICT ═══ */}
+          {step === "awaiting-verdict" && (
+            <motion.div
+              key="awaiting-verdict"
+              {...fadeVariants}
+              transition={{ duration: 0.4 }}
+              className="flex flex-col items-center text-center gap-6"
+            >
+              <GlitchText
+                text="SEALING VERDICT…"
+                as="h2"
+                className="text-2xl sm:text-3xl text-court-amber"
+              />
+              <p className="font-mono text-court-muted text-sm tracking-wider max-w-sm">
+                Waiting for onchain confirmation. The 24h cooldown begins once
+                the tx is mined.
+              </p>
+              <div className="flex gap-2">
+                <span className="w-2 h-2 bg-court-amber rounded-full animate-pulse" />
+                <span className="w-2 h-2 bg-court-amber rounded-full animate-pulse [animation-delay:150ms]" />
+                <span className="w-2 h-2 bg-court-amber rounded-full animate-pulse [animation-delay:300ms]" />
+              </div>
+              <button
+                onClick={() => {
+                  savePendingVerdict(null);
+                  setStep("accept");
+                }}
+                className="font-mono text-court-muted hover:text-court-red text-[10px] tracking-[0.3em]"
+              >
+                CANCEL
+              </button>
             </motion.div>
           )}
 
