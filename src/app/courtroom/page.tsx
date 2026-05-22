@@ -154,16 +154,22 @@ export default function CourtroomPage() {
     data: bindHash,
     reset: resetBind,
   } = useWriteContract();
-  const { isLoading: bindWaiting, isSuccess: bindSuccess } =
-    useWaitForTransactionReceipt({ hash: bindHash });
+  const {
+    data: bindReceipt,
+    isLoading: bindWaiting,
+    isSuccess: bindSuccess,
+  } = useWaitForTransactionReceipt({ hash: bindHash });
 
   const {
     writeContractAsync: writeVerdict,
     data: verdictHash,
     reset: resetVerdict,
   } = useWriteContract();
-  const { isLoading: verdictWaiting, isSuccess: verdictSuccess } =
-    useWaitForTransactionReceipt({ hash: verdictHash });
+  const {
+    data: verdictReceipt,
+    isLoading: verdictWaiting,
+    isSuccess: verdictSuccess,
+  } = useWaitForTransactionReceipt({ hash: verdictHash });
 
   const bindPending = Boolean(bindHash && bindWaiting);
   const verdictPending = Boolean(verdictHash && verdictWaiting);
@@ -526,14 +532,21 @@ export default function CourtroomPage() {
   }, [identity, alreadyBound, writeBind, savePendingBind]);
 
   useEffect(() => {
-    if (bindSuccess) {
-      toast.success("Identity bound onchain");
+    if (!bindSuccess || !bindReceipt) return;
+    if (bindReceipt.status === "reverted") {
+      console.error("Bind tx reverted on-chain:", bindReceipt.transactionHash);
+      toast.error("Bind tx reverted. Try again.");
       savePendingBind(null);
-      refetchLinked();
-      setStep("confess");
+      setStep("identity-confirm");
       resetBind();
+      return;
     }
-  }, [bindSuccess, refetchLinked, resetBind, savePendingBind]);
+    toast.success("Identity bound onchain");
+    savePendingBind(null);
+    refetchLinked();
+    setStep("confess");
+    resetBind();
+  }, [bindSuccess, bindReceipt, refetchLinked, resetBind, savePendingBind]);
 
   // ── Submit Confession ───────────────────────────────
   const handleConfess = useCallback(async () => {
@@ -580,16 +593,28 @@ export default function CourtroomPage() {
   const handleAcceptJudgment = useCallback(async () => {
     if (!judgment || !address || !identity) return;
 
-    // Pre-flight: a fresh read of the onchain cooldown. If it's active, the
-    // recordVerdict tx will revert with CooldownActive — don't waste gas.
-    if (nextAtRaw !== undefined) {
-      const nextAt = Number(nextAtRaw);
-      if (nextAt > Date.now()) {
-        toast.error("You've used all 3 verdicts — return in 24h");
-        setNextJudgment(new Date(nextAt));
-        setStep("cooldown");
-        return;
-      }
+    // Pre-flight: force a fresh read of the cooldown — wagmi's staleTime can
+    // leave us with an outdated value, and submitting a verdict tx during the
+    // 24h window costs gas and reverts with RateLimited.
+    toast("Checking eligibility…", { duration: 1500, icon: "⏳" });
+    let freshNextAt: bigint | undefined;
+    try {
+      const refresh = await refetchCooldown();
+      freshNextAt = refresh.data as bigint | undefined;
+    } catch (e) {
+      console.error("Cooldown refetch failed:", e);
+    }
+    const observedNextAt =
+      typeof freshNextAt === "bigint"
+        ? Number(freshNextAt)
+        : nextAtRaw !== undefined
+        ? Number(nextAtRaw)
+        : 0;
+    if (observedNextAt > Date.now()) {
+      toast.error("You've used all 3 verdicts — return in 24h");
+      setNextJudgment(new Date(observedNextAt));
+      setStep("cooldown");
+      return;
     }
 
     try {
@@ -620,41 +645,64 @@ export default function CourtroomPage() {
       console.error("Verdict failed:", err);
       if (msg.includes("User rejected") || msg.includes("rejected")) {
         toast.error("You cannot escape judgment");
-      } else if (msg.includes("CooldownActive")) {
-        toast.error("Cooldown active — please wait 24h between verdicts");
+      } else if (msg.includes("RateLimited") || msg.includes("CooldownActive")) {
+        toast.error("Rate-limited — you've used 3 verdicts in this 24h window");
+        setStep("cooldown");
       } else if (msg.includes("NEXT_PUBLIC_COURTROOM_ADDRESS")) {
         toast.error("Contract address not configured. Check Vercel env vars.");
       } else {
         toast.error(`Verdict tx failed: ${msg.slice(0, 80) || "unknown error"}`);
       }
     }
-  }, [judgment, address, identity, confession, writeVerdict, savePendingVerdict, nextAtRaw]);
+  }, [
+    judgment,
+    address,
+    identity,
+    confession,
+    writeVerdict,
+    savePendingVerdict,
+    nextAtRaw,
+    refetchCooldown,
+  ]);
 
   useEffect(() => {
-    if (verdictSuccess && verdictHash && judgment && identity && address) {
-      const cHash = hashConfession(confession);
-      const vHash = hashVerdict(judgment);
-      recordSession({
-        wallet_address: address,
-        username: identity.username,
-        confession,
-        verdict_intro: judgment.intro,
-        verdict_sentence: judgment.sentence,
-        verdict_comment: judgment.comment,
-        is_legendary: judgment.isLegendary,
-        confession_hash: cHash,
-        verdict_hash: vHash,
-        tx_hash: verdictHash,
-        created_at: new Date().toISOString(),
-      });
-      toast.success("Verdict sealed onchain");
+    if (!verdictSuccess || !verdictReceipt || !verdictHash || !judgment || !identity || !address) {
+      return;
+    }
+    if (verdictReceipt.status === "reverted") {
+      console.error("Verdict tx reverted on-chain:", verdictReceipt.transactionHash);
+      toast.error(
+        "Verdict tx reverted — likely you've already used 3 verdicts in the past 24h"
+      );
       savePendingVerdict(null);
       refetchCooldown();
-      setStep("verdict");
+      setStep("cooldown");
       resetVerdict();
+      return;
     }
+    const cHash = hashConfession(confession);
+    const vHash = hashVerdict(judgment);
+    recordSession({
+      wallet_address: address,
+      username: identity.username,
+      confession,
+      verdict_intro: judgment.intro,
+      verdict_sentence: judgment.sentence,
+      verdict_comment: judgment.comment,
+      is_legendary: judgment.isLegendary,
+      confession_hash: cHash,
+      verdict_hash: vHash,
+      tx_hash: verdictHash,
+      created_at: new Date().toISOString(),
+    });
+    toast.success("Verdict sealed onchain");
+    savePendingVerdict(null);
+    refetchCooldown();
+    setStep("verdict");
+    resetVerdict();
   }, [
     verdictSuccess,
+    verdictReceipt,
     verdictHash,
     judgment,
     identity,
