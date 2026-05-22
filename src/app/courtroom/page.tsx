@@ -12,7 +12,7 @@ import {
   useWriteContract,
 } from "wagmi";
 import toast from "react-hot-toast";
-import html2canvas from "html2canvas";
+import { toPng, toBlob } from "html-to-image";
 
 import { GlitchText } from "@/components/glitch-text";
 import { TerminalInput } from "@/components/terminal-input";
@@ -70,13 +70,14 @@ export default function CourtroomPage() {
   const [judgment, setJudgment] = useState<Judgment | null>(null);
   const [scanReady, setScanReady] = useState(false);
   const [nextJudgment, setNextJudgment] = useState<Date | null>(null);
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
 
   const verdictRef = useRef<HTMLDivElement>(null);
   const onRitual = chainId === ritualChain.id;
   const readEnabled = Boolean(isConnected && address && onRitual && courtroomAddress);
 
   // ── Read onchain cooldown ───────────────────────────
-  const { data: nextAtRaw, refetch: refetchCooldown } = useReadContract({
+  const { data: nextAtRaw, error: nextAtError, refetch: refetchCooldown } = useReadContract({
     address: courtroomAddress,
     abi: courtroomAbi,
     functionName: "nextJudgmentAt",
@@ -86,7 +87,7 @@ export default function CourtroomPage() {
   });
 
   // ── Read existing onchain username ──────────────────
-  const { data: linkedOnchain, refetch: refetchLinked } = useReadContract({
+  const { data: linkedOnchain, error: linkedError, refetch: refetchLinked } = useReadContract({
     address: courtroomAddress,
     abi: courtroomAbi,
     functionName: "linkedUsername",
@@ -128,7 +129,12 @@ export default function CourtroomPage() {
 
     // Wait for both reads before deciding identity vs confess — prevents the
     // identity-step flicker that would otherwise let a returning user re-bind.
-    if (nextAtRaw === undefined || linkedOnchain === undefined) {
+    // Bail out of the loading state after the deadline or if either read errored
+    // so the user is never stuck staring at the spinner.
+    const readsPending =
+      (nextAtRaw === undefined && !nextAtError) ||
+      (linkedOnchain === undefined && !linkedError);
+    if (readsPending && !loadingTimedOut) {
       setStep((curr) =>
         curr === "connect" || curr === "wrong-chain" ? "loading" : curr
       );
@@ -181,7 +187,17 @@ export default function CourtroomPage() {
       }
       return curr;
     });
-  }, [isConnected, address, onRitual, nextAtRaw, linkedOnchain]);
+  }, [isConnected, address, onRitual, nextAtRaw, linkedOnchain, nextAtError, linkedError, loadingTimedOut]);
+
+  // ── Loading-state safety net: cap loading at 2.5s ────
+  useEffect(() => {
+    if (step !== "loading") {
+      setLoadingTimedOut(false);
+      return;
+    }
+    const id = setTimeout(() => setLoadingTimedOut(true), 2500);
+    return () => clearTimeout(id);
+  }, [step]);
 
   // ── Auto-load identity for already-bound wallets ─────
   useEffect(() => {
@@ -392,28 +408,77 @@ export default function CourtroomPage() {
   const handleDownload = useCallback(async () => {
     if (!verdictRef.current) return;
     try {
-      const canvas = await html2canvas(verdictRef.current, {
+      const dataUrl = await toPng(verdictRef.current, {
         backgroundColor: "#0a0f1a",
-        scale: 2,
-        useCORS: true,
+        pixelRatio: 2,
+        cacheBust: true,
       });
       const link = document.createElement("a");
       link.download = `courtroom-verdict-${identity?.username || "anon"}.png`;
-      link.href = canvas.toDataURL("image/png");
+      link.href = dataUrl;
       link.click();
       toast.success("Verdict downloaded");
-    } catch {
-      toast.error("Download failed");
+    } catch (err) {
+      console.error("Download failed:", err);
+      const msg = (err as Error)?.message || "unknown error";
+      toast.error(`Download failed: ${msg.slice(0, 60)}`);
     }
   }, [identity]);
 
   // ── Share on X ──────────────────────────────────────
-  const handleShare = useCallback(() => {
-    const text = encodeURIComponent(
-      `I survived The Courtroom.\n\nMy sentence: "${judgment?.sentence || "classified"}"\n\n⚖️ courtroom.rechat.xyz`
-    );
-    window.open(`https://twitter.com/intent/tweet?text=${text}`, "_blank");
-  }, [judgment]);
+  const handleShare = useCallback(async () => {
+    if (!verdictRef.current || !judgment) return;
+    const text = `I survived The Courtroom.\n\nMy sentence: "${judgment.sentence}"\n\n⚖️ courtroom.rechat.xyz`;
+    const filename = `courtroom-verdict-${identity?.username || "anon"}.png`;
+
+    try {
+      const blob = await toBlob(verdictRef.current, {
+        backgroundColor: "#0a0f1a",
+        pixelRatio: 2,
+        cacheBust: true,
+      });
+      if (!blob) throw new Error("could not render verdict");
+
+      const file = new File([blob], filename, { type: "image/png" });
+
+      // Web Share API path — works on mobile + some desktop. Pre-attaches the
+      // PNG when the user picks X from the system share sheet.
+      const nav = navigator as Navigator & {
+        canShare?: (data: ShareData) => boolean;
+      };
+      if (
+        typeof nav.share === "function" &&
+        typeof nav.canShare === "function" &&
+        nav.canShare({ files: [file] })
+      ) {
+        await nav.share({ files: [file], text });
+        return;
+      }
+
+      // Fallback: download the PNG then open the X intent so the user can
+      // drag-and-drop the file into the tweet composer.
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.download = filename;
+      link.href = url;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("PNG downloaded — drop it into the tweet", {
+        icon: "📎",
+        duration: 5000,
+      });
+      window.open(
+        `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`,
+        "_blank",
+        "noopener,noreferrer"
+      );
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+      console.error("Share failed:", err);
+      const msg = (err as Error)?.message || "unknown error";
+      toast.error(`Share failed: ${msg.slice(0, 60)}`);
+    }
+  }, [judgment, identity]);
 
   // ── Render ──────────────────────────────────────────
   return (
