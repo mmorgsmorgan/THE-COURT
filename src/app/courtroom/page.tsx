@@ -302,7 +302,7 @@ export default function CourtroomPage() {
     const id = setInterval(() => {
       if (step === "awaiting-bind") refetchLinked();
       if (step === "awaiting-verdict") refetchCooldown();
-    }, 3000);
+    }, 7000);
     return () => clearInterval(id);
   }, [step, refetchLinked, refetchCooldown]);
 
