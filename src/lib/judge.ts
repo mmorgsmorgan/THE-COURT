@@ -13,6 +13,189 @@ export interface Judgment {
   isLegendary: boolean;
 }
 
+const FALLBACK_VERDICTS: Judgment[] = [
+  {
+    intro: "DEGENERATE ACTIVITY LOGGED",
+    sentence: "Sentenced to one week of opening Twitter only on weekdays.",
+    comment: "The court suspects you are not okay.",
+    isLegendary: false,
+  },
+  {
+    intro: "CRINGE COMPILER ENGAGED",
+    sentence: "Forced to read every reply you ever sent. Out loud.",
+    comment: "The transcript is, frankly, a war crime.",
+    isLegendary: false,
+  },
+  {
+    intro: "POSTING PRIVILEGES REVOKED",
+    sentence: "Banned from group chats for 72 hours. No appeals.",
+    comment: "Everyone gets a vacation. Mostly from you.",
+    isLegendary: false,
+  },
+  {
+    intro: "THE TRIBUNAL HAS SPOKEN",
+    sentence: "Sentenced to read the whole thread before replying. Forever.",
+    comment: "It will not save you, but it will help.",
+    isLegendary: false,
+  },
+  {
+    intro: "REPLY GUY SIGNATURE DETECTED",
+    sentence: "Quote-tweet privileges suspended pending an apology to OP.",
+    comment: "You were not adding to the conversation.",
+    isLegendary: false,
+  },
+  {
+    intro: "TIMELINE POISONING CONFIRMED",
+    sentence: "Sentenced to 48 hours of looking at trees.",
+    comment: "The algorithm needs a minute to recover.",
+    isLegendary: false,
+  },
+  {
+    intro: "DOOMSCROLLING IN THE FIRST DEGREE",
+    sentence: "Phone confiscated until you remember a single news story from last week.",
+    comment: "You cannot. The court is not surprised.",
+    isLegendary: false,
+  },
+  {
+    intro: "ENGAGEMENT BAIT IDENTIFIED",
+    sentence: "Forced to use only declarative sentences for one full month.",
+    comment: "Yes, that includes lowercase posting.",
+    isLegendary: false,
+  },
+  {
+    intro: "HOT TAKE TEMPERATURE: LUKEWARM",
+    sentence: "Sentenced to silently disagree for 24 hours.",
+    comment: "Bold of you to think anyone wanted that opinion.",
+    isLegendary: false,
+  },
+  {
+    intro: "PARASOCIAL ATTACHMENT FLAGGED",
+    sentence: "Unfollow three creators before sundown. The court will check.",
+    comment: "They do not know you. They do not.",
+    isLegendary: false,
+  },
+  {
+    intro: "RATIO INCOMING",
+    sentence: "Tweet stays up. Replies are sealed. You watch.",
+    comment: "This is the closest thing to justice we have.",
+    isLegendary: false,
+  },
+  {
+    intro: "MANIFEST DESTINY: CRINGE",
+    sentence: "Sentenced to log off at 9pm sharp for a week.",
+    comment: "Bedtime exists. The court has confirmed it.",
+    isLegendary: false,
+  },
+  {
+    intro: "CHRONICALLY ONLINE CONFIRMED",
+    sentence: "One real-life errand, alone, with no headphones. Today.",
+    comment: "The sun is real. The court has seen it.",
+    isLegendary: false,
+  },
+  {
+    intro: "DISCOURSE CONTAMINATION DETECTED",
+    sentence: "Drafts folder must marinate 24h before any post.",
+    comment: "Past you would have wanted this.",
+    isLegendary: false,
+  },
+  {
+    intro: "MAIN CHARACTER SYNDROME, ACUTE",
+    sentence: "Forfeit posting rights any day you are trending.",
+    comment: "The internet does not need a protagonist.",
+    isLegendary: false,
+  },
+  {
+    intro: "OPINION SUBMITTED PREMATURELY",
+    sentence: "Required to read the article before commenting. For life.",
+    comment: "Yes, even when the headline is good.",
+    isLegendary: false,
+  },
+  {
+    intro: "VIBES AUDIT FAILED",
+    sentence: "Notifications muted for 48 hours. No exceptions for replies.",
+    comment: "Your nervous system will thank the court.",
+    isLegendary: false,
+  },
+  {
+    intro: "ENGAGEMENT FARM RAID",
+    sentence: "Threads with hooks like 'A thread:' are banned. Forever.",
+    comment: "Nobody is reading it. Be honest.",
+    isLegendary: false,
+  },
+  {
+    intro: "GROUP CHAT MENACE LOCATED",
+    sentence: "Sentenced to be 'on read' for the next 12 hours.",
+    comment: "Now you know how it feels.",
+    isLegendary: false,
+  },
+  {
+    intro: "CRYPTO BROKERAGE EXAM FAILED",
+    sentence: "Required to explain your portfolio out loud to a houseplant.",
+    comment: "The plant will not be moved.",
+    isLegendary: false,
+  },
+  {
+    intro: "PROMPT INJECTION ATTEMPT DETECTED",
+    sentence: "Sentenced to write the same prompt 100 times by hand.",
+    comment: "The tribunal does not bend.",
+    isLegendary: false,
+  },
+  {
+    intro: "FEED CONSUMPTION OUT OF SPEC",
+    sentence: "Phone-free meals for one week. No, the watch counts.",
+    comment: "Yes, even breakfast.",
+    isLegendary: false,
+  },
+  {
+    intro: "AESTHETIC VIOLATION RECORDED",
+    sentence: "All emoji privileges suspended for 72 hours.",
+    comment: "Words have to do the work now.",
+    isLegendary: false,
+  },
+  {
+    intro: "PIPELINE OF SHAME ACTIVATED",
+    sentence: "Banned from sharing screenshots of DMs for a month.",
+    comment: "Whatever they said, the court does not care.",
+    isLegendary: false,
+  },
+  {
+    intro: "LINKEDIN ENERGY DETECTED",
+    sentence: "Banned from saying 'Excited to share' on any platform.",
+    comment: "Just say what happened. Nobody needs the preamble.",
+    isLegendary: false,
+  },
+  {
+    intro: "CONFESSION REGISTERED",
+    sentence: "Sentenced to think about it for one full day.",
+    comment: "The court does not always escalate. Today is your day.",
+    isLegendary: false,
+  },
+  {
+    intro: "SUBTWEET INTERCEPTED",
+    sentence: "Required to @ them directly or delete it. Pick one.",
+    comment: "Courage. Or cowardice. The court allows both.",
+    isLegendary: false,
+  },
+  {
+    intro: "ALGORITHMIC HOSTAGE IDENTIFIED",
+    sentence: "Manually pick five accounts to follow. From memory.",
+    comment: "Reclaim something. Anything.",
+    isLegendary: false,
+  },
+  {
+    intro: "NPC ARC IN PROGRESS",
+    sentence: "Disallowed from quote-tweeting your own posts for 30 days.",
+    comment: "Engagement bait is a habit. So is reading books.",
+    isLegendary: false,
+  },
+  {
+    intro: "THE TRIBUNAL HAS SPOKEN",
+    sentence: "Sentenced to 24 hours of introspection. Walk it off.",
+    comment: "The AI judge experienced a glitch. You got lucky.",
+    isLegendary: false,
+  },
+];
+
 const LEGENDARY_VERDICTS: Judgment[] = [
   {
     intro: "ULTIMATE SENTENCE ACTIVATED",
@@ -125,10 +308,7 @@ export async function generateJudgment(
 }
 
 function fallback(): Judgment {
-  return {
-    intro: "THE TRIBUNAL HAS SPOKEN",
-    sentence: "Sentenced to 24 hours of introspection.",
-    comment: "The AI judge experienced a glitch. You got lucky.",
-    isLegendary: false,
-  };
+  return FALLBACK_VERDICTS[
+    Math.floor(Math.random() * FALLBACK_VERDICTS.length)
+  ];
 }
