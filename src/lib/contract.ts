@@ -1,5 +1,5 @@
 import { keccak256, toBytes } from "viem";
-import type { Judgment } from "./gemini";
+import type { Judgment } from "./judge";
 
 const SESSION_KEY = "courtroom_sessions";
 
