@@ -60,7 +60,7 @@ const fadeVariants = {
 export default function CourtroomPage() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
-  const { switchChain, isPending: switching } = useSwitchChain();
+  const { switchChainAsync, isPending: switching } = useSwitchChain();
 
   const [step, setStep] = useState<Step>("connect");
   const [username, setUsername] = useState("");
@@ -71,6 +71,7 @@ export default function CourtroomPage() {
   const [scanReady, setScanReady] = useState(false);
   const [nextJudgment, setNextJudgment] = useState<Date | null>(null);
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+  const [autoSwitchAttempted, setAutoSwitchAttempted] = useState(false);
 
   const verdictRef = useRef<HTMLDivElement>(null);
   const onRitual = chainId === ritualChain.id;
@@ -198,6 +199,70 @@ export default function CourtroomPage() {
     const id = setTimeout(() => setLoadingTimedOut(true), 2500);
     return () => clearTimeout(id);
   }, [step]);
+
+  // ── Auto-switch to Ritual on connect, add chain if missing ──
+  useEffect(() => {
+    if (!isConnected) {
+      setAutoSwitchAttempted(false);
+      return;
+    }
+    if (onRitual || autoSwitchAttempted || switching) return;
+    setAutoSwitchAttempted(true);
+
+    (async () => {
+      try {
+        await switchChainAsync({ chainId: ritualChain.id });
+        toast.success("Switched to Ritual chain");
+      } catch (err) {
+        const msg = (err as Error)?.message ?? "";
+        console.error("Auto-switch failed:", err);
+
+        const chainNotAdded =
+          msg.includes("4902") ||
+          msg.toLowerCase().includes("unrecognized") ||
+          msg.toLowerCase().includes("has not been added") ||
+          msg.toLowerCase().includes("does not have a chain");
+
+        if (chainNotAdded) {
+          const eth = (window as unknown as { ethereum?: { request: (args: { method: string; params: unknown[] }) => Promise<unknown> } }).ethereum;
+          if (eth?.request) {
+            try {
+              await eth.request({
+                method: "wallet_addEthereumChain",
+                params: [
+                  {
+                    chainId: `0x${ritualChain.id.toString(16)}`,
+                    chainName: ritualChain.name,
+                    nativeCurrency: ritualChain.nativeCurrency,
+                    rpcUrls: [...ritualChain.rpcUrls.default.http],
+                    blockExplorerUrls: ritualChain.blockExplorers
+                      ? [ritualChain.blockExplorers.default.url]
+                      : undefined,
+                  },
+                ],
+              });
+              toast.success("Ritual chain added to your wallet");
+              return;
+            } catch (addErr) {
+              const addMsg = (addErr as Error)?.message ?? "";
+              if (addMsg.includes("User rejected") || addMsg.includes("rejected")) {
+                toast("Add Ritual to your wallet to continue", { icon: "🔗" });
+              } else {
+                toast.error(`Could not add Ritual: ${addMsg.slice(0, 60) || "unknown error"}`);
+              }
+              return;
+            }
+          }
+        }
+
+        if (msg.includes("User rejected") || msg.includes("rejected")) {
+          toast("Switch to Ritual to continue", { icon: "🔗" });
+        } else {
+          toast.error(`Could not switch to Ritual: ${msg.slice(0, 60) || "unknown error"}`);
+        }
+      }
+    })();
+  }, [isConnected, onRitual, autoSwitchAttempted, switching, switchChainAsync]);
 
   // ── Auto-load identity for already-bound wallets ─────
   useEffect(() => {
@@ -539,7 +604,7 @@ export default function CourtroomPage() {
                 THIS COURT CONVENES ONLY ON THE RITUAL CHAIN
               </p>
               <button
-                onClick={() => switchChain({ chainId: ritualChain.id })}
+                onClick={() => setAutoSwitchAttempted(false)}
                 disabled={switching}
                 className="btn-neon disabled:opacity-30"
               >
