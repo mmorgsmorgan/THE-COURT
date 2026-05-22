@@ -58,7 +58,7 @@ const fadeVariants = {
 };
 
 export default function CourtroomPage() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, connector } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync, isPending: switching } = useSwitchChain();
 
@@ -206,16 +206,10 @@ export default function CourtroomPage() {
       setAutoSwitchAttempted(false);
       return;
     }
-    if (onRitual || autoSwitchAttempted || switching) return;
+    if (onRitual || autoSwitchAttempted || switching || !connector) return;
     setAutoSwitchAttempted(true);
 
     (async () => {
-      const eth = (window as unknown as {
-        ethereum?: {
-          request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-        };
-      }).ethereum;
-
       const chainIdHex = `0x${ritualChain.id.toString(16)}`;
       const ritualConfig = {
         chainId: chainIdHex,
@@ -227,72 +221,69 @@ export default function CourtroomPage() {
           : undefined,
       };
 
-      // Prefer direct window.ethereum calls for injected wallets — wagmi's
-      // switchChain has been observed to silently no-op in production.
-      if (eth?.request) {
-        toast("Requesting Ritual chain…", { icon: "⛓️", duration: 3000 });
+      // Get the EIP-1193 provider from the active connector. Works for all
+      // connector types: injected (MetaMask extension, Rabby), WalletConnect
+      // (MetaMask mobile, Rainbow, Trust), and Coinbase Wallet.
+      let provider:
+        | {
+            request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+          }
+        | undefined;
+      try {
+        provider = (await connector.getProvider()) as typeof provider;
+      } catch {
+        provider = undefined;
+      }
+
+      toast("Requesting Ritual chain…", { icon: "⛓️", duration: 3000 });
+
+      // wallet_addEthereumChain is idempotent on most wallets — if the chain
+      // is already added it just switches; if not, it prompts to add. Skips
+      // the 4902 error-code dance which MetaMask Mobile handles inconsistently.
+      if (provider?.request) {
         try {
-          await eth.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: chainIdHex }],
+          await provider.request({
+            method: "wallet_addEthereumChain",
+            params: [ritualConfig],
           });
-          toast.success("Switched to Ritual chain");
+          toast.success("On Ritual chain");
           return;
-        } catch (switchErr) {
-          const switchMsg = (switchErr as Error)?.message ?? "";
-          const code = (switchErr as { code?: number })?.code;
-          console.error("switch failed:", code, switchMsg);
-
-          const chainNotAdded =
-            code === 4902 ||
-            switchMsg.includes("4902") ||
-            switchMsg.toLowerCase().includes("unrecognized") ||
-            switchMsg.toLowerCase().includes("has not been added");
-
-          if (chainNotAdded) {
-            try {
-              await eth.request({
-                method: "wallet_addEthereumChain",
-                params: [ritualConfig],
-              });
-              toast.success("Ritual chain added");
-              return;
-            } catch (addErr) {
-              const addMsg = (addErr as Error)?.message ?? "";
-              console.error("add failed:", addMsg);
-              if (addMsg.includes("rejected") || (addErr as { code?: number })?.code === 4001) {
-                toast("Add Ritual to your wallet to continue", { icon: "🔗" });
-              } else {
-                toast.error(`Could not add Ritual: ${addMsg.slice(0, 60) || "unknown"}`);
-              }
-              return;
-            }
+        } catch (addErr) {
+          const addMsg = (addErr as Error)?.message ?? "";
+          const code = (addErr as { code?: number })?.code;
+          console.error("addEthereumChain failed:", code, addMsg);
+          if (code === 4001 || addMsg.includes("rejected")) {
+            toast("Approve Ritual in your wallet to continue", { icon: "🔗" });
+            return;
           }
-
-          if (switchMsg.includes("rejected") || code === 4001) {
-            toast("Switch to Ritual to continue", { icon: "🔗" });
-          } else {
-            toast.error(`Could not switch: ${switchMsg.slice(0, 60) || "unknown"}`);
+          // Some wallets don't implement add-chain — try a plain switch.
+          try {
+            await provider.request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: chainIdHex }],
+            });
+            toast.success("Switched to Ritual chain");
+            return;
+          } catch (switchErr) {
+            const switchMsg = (switchErr as Error)?.message ?? "";
+            console.error("switchEthereumChain failed:", switchMsg);
+            toast.error(`Chain switch failed: ${switchMsg.slice(0, 60) || addMsg.slice(0, 60) || "wallet refused"}`);
+            return;
           }
-          return;
         }
       }
 
-      // Non-injected (WalletConnect / Coinbase) — let wagmi handle it.
+      // Last-resort fallback: let wagmi try.
       try {
         await switchChainAsync({ chainId: ritualChain.id });
         toast.success("Switched to Ritual chain");
       } catch (err) {
         const msg = (err as Error)?.message ?? "";
         console.error("wagmi switch failed:", err);
-        if (msg.includes("rejected")) {
-          toast("Switch to Ritual to continue", { icon: "🔗" });
-        } else {
-          toast.error(`Could not switch: ${msg.slice(0, 60) || "unknown"}`);
-        }
+        toast.error(`Could not switch: ${msg.slice(0, 60) || "unknown"}`);
       }
     })();
-  }, [isConnected, onRitual, autoSwitchAttempted, switching, switchChainAsync]);
+  }, [isConnected, onRitual, autoSwitchAttempted, switching, switchChainAsync, connector]);
 
   // ── Auto-load identity for already-bound wallets ─────
   useEffect(() => {
