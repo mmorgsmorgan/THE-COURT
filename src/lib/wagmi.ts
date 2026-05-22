@@ -1,18 +1,25 @@
-import { http, createConfig } from "wagmi";
-import { injected, walletConnect } from "wagmi/connectors";
+import { cookieStorage, createStorage, type Config } from "wagmi";
+import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
+import type { AppKitNetwork } from "@reown/appkit/networks";
 import { ritualChain } from "./chain";
 
-export const wagmiConfig = createConfig({
-  chains: [ritualChain],
-  connectors: [
-    injected({ shimDisconnect: true }),
-    ...(process.env.NEXT_PUBLIC_WC_PROJECT_ID
-      ? [walletConnect({ projectId: process.env.NEXT_PUBLIC_WC_PROJECT_ID })]
-      : []),
-  ],
-  transports: {
-    [ritualChain.id]: http(
-      process.env.NEXT_PUBLIC_RPC_URL ?? "https://rpc.ritualfoundation.org"
-    ),
-  },
+export const projectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID || "";
+
+if (!projectId && typeof window !== "undefined") {
+  console.warn(
+    "NEXT_PUBLIC_WC_PROJECT_ID is not set — Reown AppKit will not initialize. Get a project ID at https://cloud.reown.com."
+  );
+}
+
+export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
+  ritualChain as AppKitNetwork,
+];
+
+export const wagmiAdapter = new WagmiAdapter({
+  storage: createStorage({ storage: cookieStorage }),
+  ssr: true,
+  projectId: projectId || "fallback",
+  networks,
 });
+
+export const wagmiConfig: Config = wagmiAdapter.wagmiConfig;

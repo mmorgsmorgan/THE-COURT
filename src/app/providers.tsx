@@ -2,9 +2,41 @@
 
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { wagmiConfig } from "@/lib/wagmi";
+import { wagmiAdapter, wagmiConfig, projectId, networks } from "@/lib/wagmi";
+import { createAppKit } from "@reown/appkit/react";
 import { Toaster } from "react-hot-toast";
 import { useState } from "react";
+
+if (typeof window !== "undefined" && projectId) {
+  createAppKit({
+    adapters: [wagmiAdapter],
+    networks,
+    defaultNetwork: networks[0],
+    projectId,
+    metadata: {
+      name: "The Courtroom",
+      description: "Onchain ritual judgment",
+      url:
+        typeof window !== "undefined"
+          ? window.location.origin
+          : "https://the-courtroom.vercel.app",
+      icons: [],
+    },
+    features: {
+      analytics: false,
+      email: false,
+      socials: false,
+      swaps: false,
+      onramp: false,
+    },
+    themeMode: "dark",
+    themeVariables: {
+      "--w3m-accent": "#00ff41",
+      "--w3m-font-family": "'JetBrains Mono', monospace",
+      "--w3m-border-radius-master": "0px",
+    },
+  });
+}
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(

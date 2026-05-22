@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "The Courtroom — AI Judgment on Ritual Chain",
   description:
