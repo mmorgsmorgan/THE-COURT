@@ -5,7 +5,7 @@ import { courtroomAbi, courtroomAddress } from "@/lib/courtroom-abi";
 
 export const revalidate = 30;
 
-const DEPLOY_BLOCK = BigInt(22_640_212);
+const DEPLOY_BLOCK = BigInt(22_709_932);
 const MAX_LOOKBACK = BigInt(200_000);
 const MAX_RESULTS = 50;
 

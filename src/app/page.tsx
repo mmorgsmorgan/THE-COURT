@@ -36,7 +36,7 @@ export default function LandingPage() {
           transition={{ delay: 0.8, duration: 0.6 }}
           className="flex flex-col gap-1 mb-12"
         >
-          {["One confession.", "One judgment.", "One verdict every 24 hours."].map(
+          {["One confession.", "One judgment.", "Three verdicts every 24 hours."].map(
             (line, i) => (
               <motion.p
                 key={line}

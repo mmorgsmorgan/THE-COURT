@@ -196,9 +196,17 @@ export default function CourtroomPage() {
     // Ritual chain returns block.timestamp in MILLISECONDS, so nextJudgmentAt is ms.
     const nextAtMs = Number(nextAtRaw);
     const nowMs = Date.now();
+    const COOLDOWN_MS = 86_400_000;
+    const lastJudgmentAtMs = nextAtMs > 0 ? nextAtMs - COOLDOWN_MS : 0;
 
-    // Pending verdict tx confirmed onchain? — clear and route to verdict screen.
-    if (pendingVerdict && nextAtMs > nowMs) {
+    // Pending verdict tx confirmed onchain? Only treat as confirmed if
+    // lastJudgmentAt is recent enough to be from OUR submission (within
+    // a 60s clock-skew buffer). Otherwise the cooldown is from a previous
+    // verdict and our pending tx must have reverted.
+    if (
+      pendingVerdict &&
+      lastJudgmentAtMs >= pendingVerdict.submittedAt - 60_000
+    ) {
       savePendingVerdict(null);
       refetchLinked();
       setNextJudgment(new Date(nextAtMs));
@@ -207,11 +215,18 @@ export default function CourtroomPage() {
     }
 
     if (nextAtMs > nowMs) {
+      // Stale pendingVerdict left over from a tx that reverted (cooldown is
+      // from an older verdict). Clear it and surface the failure.
+      if (
+        pendingVerdict &&
+        lastJudgmentAtMs < pendingVerdict.submittedAt - 60_000
+      ) {
+        savePendingVerdict(null);
+        toast.error("Verdict tx reverted — cooldown already active from a previous verdict");
+      }
       setNextJudgment(new Date(nextAtMs));
       setStep((curr) =>
-        curr === "connect" || curr === "wrong-chain" || curr === "loading"
-          ? "cooldown"
-          : curr
+        curr === "verdict" || curr === "locked" ? curr : "cooldown"
       );
       return;
     }
@@ -564,6 +579,19 @@ export default function CourtroomPage() {
   // ── Accept Judgment — record onchain ────────────────
   const handleAcceptJudgment = useCallback(async () => {
     if (!judgment || !address || !identity) return;
+
+    // Pre-flight: a fresh read of the onchain cooldown. If it's active, the
+    // recordVerdict tx will revert with CooldownActive — don't waste gas.
+    if (nextAtRaw !== undefined) {
+      const nextAt = Number(nextAtRaw);
+      if (nextAt > Date.now()) {
+        toast.error("You've used all 3 verdicts — return in 24h");
+        setNextJudgment(new Date(nextAt));
+        setStep("cooldown");
+        return;
+      }
+    }
+
     try {
       const addr = assertCourtroomAddress();
       const cHash = hashConfession(confession);
@@ -592,13 +620,15 @@ export default function CourtroomPage() {
       console.error("Verdict failed:", err);
       if (msg.includes("User rejected") || msg.includes("rejected")) {
         toast.error("You cannot escape judgment");
+      } else if (msg.includes("CooldownActive")) {
+        toast.error("Cooldown active — please wait 24h between verdicts");
       } else if (msg.includes("NEXT_PUBLIC_COURTROOM_ADDRESS")) {
         toast.error("Contract address not configured. Check Vercel env vars.");
       } else {
         toast.error(`Verdict tx failed: ${msg.slice(0, 80) || "unknown error"}`);
       }
     }
-  }, [judgment, address, identity, confession, writeVerdict, savePendingVerdict]);
+  }, [judgment, address, identity, confession, writeVerdict, savePendingVerdict, nextAtRaw]);
 
   useEffect(() => {
     if (verdictSuccess && verdictHash && judgment && identity && address) {
@@ -840,8 +870,8 @@ export default function CourtroomPage() {
                 className="text-2xl sm:text-3xl text-court-amber"
               />
               <p className="font-mono text-court-muted text-sm tracking-wider max-w-sm">
-                Waiting for onchain confirmation. The 24h cooldown begins once
-                the tx is mined.
+                Waiting for onchain confirmation. The verdict counts toward your
+                3-per-24h limit once mined.
               </p>
               <div className="flex gap-2">
                 <span className="w-2 h-2 bg-court-amber rounded-full animate-pulse" />
@@ -874,7 +904,7 @@ export default function CourtroomPage() {
                 className="text-2xl sm:text-4xl text-court-red neon-glow-red"
               />
               <p className="font-mono text-court-muted text-sm tracking-wider max-w-sm">
-                You have already faced judgment today.
+                You have used all 3 verdicts in this 24h window.
               </p>
               <p className="font-mono text-court-muted text-xs tracking-wider">
                 RETURN IN
@@ -1097,8 +1127,8 @@ export default function CourtroomPage() {
               </div>
 
               <p className="font-mono text-court-muted text-xs max-w-sm">
-                Signing this transaction seals your verdict onchain and starts
-                the 24h cooldown.
+                Signing this transaction seals your verdict onchain. Up to 3
+                verdicts every 24 hours.
               </p>
               <button
                 onClick={handleAcceptJudgment}
